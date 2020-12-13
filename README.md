@@ -32,3 +32,5 @@ Per últim hi ha 3 scripts amb pyhton3 que corresponen amb la seva implementaci�
 Treball final del màster MUSI realitzat a la universitat de les illes Balears
 
 ## Llicencia
+
+Treballant
