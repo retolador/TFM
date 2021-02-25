@@ -50,10 +50,10 @@ class Classificacio_rutes(object):
         self.inici_entreteniment_festiu = time.strptime("10:00", "%H:%M")
 
          #self.param_dic = {
-        #"host"      : "localhost",
-        #"database"  : "worldbankdata",
-        #"user"      : "myuser",
-        #"password"  : "Passw0rd"}
+        #"host"      : "-",
+        #"database"  : "-",
+        #"user"      : "-",
+        #"password"  : "-"}
 
 
 
@@ -430,7 +430,7 @@ class Classificacio_rutes(object):
         try:
             # connect to the PostgreSQL server
             print('Connecting to the PostgreSQL database...')
-            conn = psycopg2.connect("dbname='smartwifi' user='postgres' host='localhost' password='passf0rd'")
+            conn = psycopg2.connect("dbname='-' user='-' host='-' password='-'")
         except (Exception, psycopg2.DatabaseError) as error:
             print(error)
             #sys.exit(1)
