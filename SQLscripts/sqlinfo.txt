@@ -1,0 +1,4 @@
+En aquesta carpeta estiran diferents scripts que s'han utilitzat per la base de dades on estiran:
+- Creació de taules
+- Input d'algunes taules
+- Tractament d'algunes taules
