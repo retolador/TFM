@@ -54,10 +54,10 @@ class Classificacio_mobilitat(object):
         self.usuaris_mobils = list() # llistat dels usuaris únics mòbils
 
         self.param_dic = {
-        "dbname"      : "smartwifi",
-        "user"  : "postgres",
-        "host"      : "localhost",
-        "password"  : "passf0rd"
+        "dbname"      : "-",
+        "user"  : "-",
+        "host"      : "-",
+        "password"  : "-"
         }
     def get_llista_usuaris_mobil(self):
         """
@@ -338,7 +338,7 @@ class Classificacio_mobilitat(object):
         try:
             # connect to the PostgreSQL server
             print('Connecting to the PostgreSQL database...')
-            conn = psycopg2.connect("dbname='smartwifi' user='postgres' host='localhost' password='passf0rd'")
+            conn = psycopg2.connect("dbname='-' user='-' host='-' password='-'")
             print("Connected to the PostgreSQL database!!!")
         except (Exception, psycopg2.DatabaseError) as error:
             print(error)
