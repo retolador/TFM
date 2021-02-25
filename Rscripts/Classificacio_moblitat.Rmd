@@ -1,0 +1,874 @@
+---
+title: "TFM Classificació mobilitat"
+output: html_document
+autor: Pau Salas Cerda
+---
+
+##Fase de creació de l'algoritme: Classificació de la mobilitat 
+
+En aquest script es realitzaran les proves per intentar classificar la mobilitat de les persones en un primer moment. Es realitzaran diferents proves i dibuixar diferents gràfics per classificar les dades.
+Es voldran classificar els mitjans de transport en tres blocs, a causa de les velocitats que alguns transports comparteixen:
+
+Vianant assegut, quiet
+
+Vianant camina
+
+Altres transports ( bicicleta, cotxe motoritzat, patins, etc ...)
+
+Aquesta classificació requereix la classificació dels dispositius que són habituals i mòbils (on aquest primer no s'hi ha inclòs, s'ha utilitzat la base de dades d'un dia).
+
+Sorgiran dos scripts:
+El primer és per poder ajudar a crear l'algoritme amb les dades d'un usuari i tenir un idea que realitzar.
+El segon és el que s'implementarà a la màquina virtual.
+
+El primer pas és instal·lar les llibreries necessàries per realitzar el script.
+
+#LLibreries
+```{r warning=FALSE}
+library(dplyr)
+library(corrplot)
+library(anytime)
+```
+
+
+Les passes al principi són simples obtenir les dades i recollir un subconjunt d'entrenament, aquest seran els primers valors.
+
+```{r}
+dades = read.csv("~/Escritorio/TFM/observacionsEstiu20190724mod.csv", header = TRUE, sep = ';')
+str(dades)
+head(dades)
+```
+
+Aquesta vegada el subcojunt és major, per poder realitzar l'estudi de millor manera.
+
+```{r}
+dades.train = head(dades, round(length(dades$idreg)*0.05))
+head(dades.train)
+```
+
+
+
+Per calcular la distància entre dos punts utilitzarà la fórmula de Haversine
+Que a partir de la longitud i la latitud dels dos punts, troba la distància i ho retorna en metres.
+
+## Calcular distancia
+
+Haversine
+fórmula:
+a = sin²(Δφ/2) + cos φ1 ⋅ cos φ2 ⋅ sin²(Δλ/2)
+c = 2 ⋅ atan2( √a, √(1−a) )
+d = R ⋅ c
+
+Per això crearem una funció a R per trobar la distància.
+```{r}
+R = 6371000 # Radi de la terra en metres
+Haversine = function(latA, lngA, latB, lngB){
+  a1 = latA * pi/180  #Ho passam a radians.
+  a2 = latB * pi/180
+  b1 = (latB - latA) * pi/180 
+  b2 = (lngB - lngA) * pi/180
+  
+  a = sin(b1/2) * sin(b1/2) + cos(a1) * cos(a2) * sin(b2/2) * sin(b2/2) 
+  c = 2 * atan2(sqrt(a), sqrt(1-a))
+  
+  d=abs(R*c) # En metres
+  d
+}
+```
+
+
+## Obtenir velocitats d'un individu
+
+Una vegada comprovat que funciona s'utilitzará per fer probes amb un individu collit a l'atzar, que tengui mostres suficients per fer la classificació
+```{r}
+individu = dades.train[ dades.train$clientmac == "00:1a:dd:54:4c:24", ]
+individu = individu[order(individu$seentime),] # S'ordenen les mostres a través del seentime
+
+head(individu)
+```
+
+
+Al observar que l'individu té mostres suficients, és procedeix a fer una proba sobre sobre dos instants de temps
+```{r}
+espai = Haversine(individu$lat[1],  individu$lng[1], individu$lat[2], individu$lng[2])
+espai
+temps = (individu$seentime[2] - individu$seentime[1])
+temps
+mps = espai/temps
+kh = mps * 3600/1000
+kh #La resposta és guardarà en Km/h
+```
+
+
+
+Per probar se miraran les velocitats del usuari de proba
+```{r}
+proba_velocitats = c()
+for (i in 1:(length(individu$idreg))-1) {
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  espai
+  temps= (individu$seentime[i+1] - individu$seentime[i])
+  temps
+  Kh = espai*3600/(1000 * temps)
+  Kh
+  proba_velocitats[i] = Kh
+}
+head(proba_velocitats)
+```
+
+# Conclusió
+
+Es pot veure que hi ha una instància que arriba a infinit. Aquesta entrada es considera aberrant amb la qual cosa abans de classificar les velocitats, s'ha de fer l'eliminació de les velocitats aberrants.
+
+Per això totes les velocitats que superen els 60 km/h es consideraran aberrants
+
+##Eliminació de les velocitats aberrants.
+
+-Infinits en comptes d'eliminar-lo fer el valor mitjà dels dos.
+
+-Valors que superin els 60 Km/h (aberrant error de geolocalització)
+
+Inserir un valor raonable
+
+Temps intermedi afegir un punt entre l'anterior i el següent
+Interpolació
+
+
+```{r}
+proba_velocitats = c()
+for (i in 1:(length(individu$idreg)-1)) {
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  
+  temps=  (individu$seentime[i+1] - individu$seentime[i])
+  
+  Kh = espai*3600/(1000 * temps)
+  #print(individu$seentime[i+1])
+  if(Kh > 60){ #Punts aberrants 
+    individu$lat[i+1] = (individu$lat[i] + individu$lat[i+2])/2
+    individu$lng[i+1] = (individu$lng[i] + individu$lng[i+2])/2
+    individu$seentime[i+1] = (individu$seentime[i]/100 + individu$seentime[i+2]/100)*50
+    
+    
+    espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  
+    temps=  (individu$seentime[i+1] - individu$seentime[i])
+  
+    Kh = espai*3600/(1000 * temps)
+  
+    
+  }
+  
+   
+  
+  proba_velocitats[i] = Kh
+}
+head(proba_velocitats)
+
+```
+
+
+
+
+
+
+# subgrups de velocitats
+
+Totes les velocitats con corresponen al mateix periode de temps (alguns poden pertanyer al periode de dematí, mentre que els altres pertanyen a un periode d'horabaixa)
+
+Per això és mirarà la diferencia de temps per indicar quan es pot considerar quan cambia de franja
+
+```{r}
+temps_mostres = c()
+for (i in 1:(length(individu$idreg))-1) {
+
+  temps= (individu$seentime[i+1] - individu$seentime[i])
+  temps_mostres[i] = temps
+}
+
+summary(temps_mostres)
+
+```
+
+
+
+```{r}
+mediana = median(temps_mostres)
+tercer_quant = quantile(temps_mostres, 0.75)
+media = sum(temps_mostres)/length(temps_mostres)
+primer_quant = quantile(temps_mostres, 0.25)
+media = rep(media, times = length(individu$idreg))
+desviacio_tipica = sd(temps_mostres)
+primer_quant = rep(primer_quant, times = length(individu$idreg))
+tercer_quant = rep(tercer_quant, times = length(individu$idreg))
+mediana = rep(mediana, times = length(individu$idreg))
+plot(temps_mostres, xlab = "Registres", ylab ="Temps (s) ", main = "Diferencia de temps entre registres")
+lines(mediana, col = "red")
+lines(tercer_quant, lty = 2, col = "blue")
+lines(primer_quant, lty = 3, col = "orange")
+lines(media, lty = 4, col = "pink")
+legend("topleft", legend=c("Mitjana 167.5", "Tercer Quartil 358.25", "mitja 250.811", "Primer quartil 82.625", "Desviació típica 82.625"),
+       col=c("red", "blue", "orange", "pink", "black"), lty=1:4, cex=0.8)
+```
+# Conclusió
+
+Es pot veure representada la mitjana i el tercer quartil. Per fer la divisió entre subgrups s'escollirà la mitja més la desviació típica.
+
+## Mostra a través de les velocitats
+
+```{r}
+summary(proba_velocitats)
+```
+
+```{r}
+
+seentime = individu$seentime[1:length(individu$seentime)-1]
+
+lim_quiet = rep(1, times = length(seentime))
+lim_caminar = rep(8, times = length(seentime))
+
+plot(proba_velocitats, type = "l", xlab = "Registres", ylab ="Velocitats (Km/h) ", main = "Mitja de velocitats en un dia d'un usuari")
+lines(lim_quiet, col="green")
+lines(lim_caminar, lty= 2, col = "blue")
+legend("topleft", legend=c("Lim_quiet = 1", "Lim_caminar = 8"),
+       col=c("green", "blue"), lty=1:2, cex=0.8)
+```
+#Cocnlusió
+En veure les velocitats s'observen pics de velocitat, per corregir aquesta errada seria suavitzar aquesta gràfica per obtenir un millor resultat.
+Filtratge disponible:
+-Moving Average per k=3,4,5.
+-Weighted Moving Average descartat, ja que és com l'anterior però incorporant pesos a les mostres.
+-Simple Exponential Smoothing.
+
+```{r}
+#Filtres
+#Moving Average per k=3
+
+
+k=3
+
+Yt.kMA3 = stats::filter(proba_velocitats, filter=rep(1/k,k))
+
+#Moving Average per k=5
+k=5
+Yt.kMA5 = stats::filter(proba_velocitats, filter=rep(1/k,k))
+
+Yt.4MAcentered <- stats::filter(proba_velocitats,filter=c(1/8,1/4,1/4,1/4,1/8),sides=2)
+
+#simple exponential smoothing
+
+proba_velocitats_ts = ts(proba_velocitats)
+
+smb = HoltWinters(proba_velocitats_ts, beta = FALSE, gamma = FALSE)
+
+
+```
+
+
+Visualització dels suavitzats.
+Per k=3,4,5 i Simple Exponential Smoothing
+```{r}
+plot( proba_velocitats, type = "l", xlab = "Registres", ylab ="Velocitats (Km/h) ", main = "Suavització de les velocitats per k=3")
+lines(Yt.kMA3,col="red")
+legend("topleft", legend=c("Suavització per k=3"), col=c("red"), lty=1, cex=0.8)
+
+plot( proba_velocitats, type = "l", xlab = "Registres", ylab ="Velocitats (Km/h) ", main = "Suavització de les velocitats per k=5")
+lines(Yt.kMA5,col="blue")
+legend("topleft", legend=c("Suavització per k=5"), col=c("blue"), lty=1, cex=0.8)
+
+plot( proba_velocitats, type = "l", xlab = "Registres", ylab ="Velocitats (Km/h) ", main = "Suavització de les velocitats per k=4")
+lines(Yt.4MAcentered, col="green")
+legend("topleft", legend=c("Suavització per k=4"), col=c("green"), lty=1, cex=0.8)
+
+
+plot(smb, xlab = "Registres", ylab ="Velocitats (Km/h) ", main = "Suavització amb Simple Exponential Smoothing")
+legend("topleft", legend=c("Simple Exponential Smoothing"), col=c("red"), lty=1, cex=0.8)
+#smb = data.frame(as.matrix(smb$fitted))
+#smb = smb$level
+#smb
+```
+#Conclusió
+S'observa que els pics ja són menors. Amb tal cosa que s'han eliminat els punts aberrants i s'han corregit els possibles errors.
+
+El problema és conèixer quin és el millor mètode de suavitzat, ja que no hi ha l'eina que ens indiqui quin és.
+
+Per aquest script s'ha escollit el cas de k=3, però per la versió final aquest pot canviar.
+
+#Agrupacions d'entrades
+
+Períodes de mobilitat que ha tengut
+Que els que estan per davall del 3 quartil serà un grup
+
+
+```{r}
+llistat_velocitats = list() #Subgrup de velocitats
+contador_llistat = 1
+
+subgrup_velocitats = c()  
+contador_subgrup = 1
+
+periode_deadline = 358.2 # Periode de deadline
+
+
+for (i in 1:(length(individu$idreg)-1)) {
+  
+  
+  #Obtenir la velocitat en Km/h
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  temps = (individu$seentime[i+1] - individu$seentime[i])
+  Kh = espai*3600/(1000 * temps)
+  if(temps <= periode_deadline){
+    
+    subgrup_velocitats[contador_subgrup] = Kh
+    contador_subgrup =  contador_subgrup + 1
+  
+  }else if(!is.null(subgrup_velocitats)){
+    
+    
+    llistat_velocitats[[contador_llistat]] = subgrup_velocitats
+    contador_llistat = contador_llistat + 1
+    
+    subgrup_velocitats = c()
+    contador_subgrup = 1
+  }
+  
+  
+  
+
+}
+head(llistat_velocitats)
+```
+#Conclusió
+
+Aquí podem observar els primers subgrups de l'usuari seleccionat.
+On hi ha diversos subgrups que tenen una longitud d'1 o 2. En aquests casos no es classificarà el mode de transport. Es posarà el límit a 3 mostres, perquè es pugui classificar.
+Llavors en el subgrup 5, apareix una velocitat que arriba als 50 Km/h quan la mitja no supera els 10 km/h. Per aquest cas estan les altres mostres per definir el mode de transport.
+Llavors s'elimina les mostres que tenguin la longitud menor que tres. Finalment l'algoritme quedaria de la següent manera:
+
+```{r}
+llistat_velocitats = list() #Subgrup de velocitats
+contador_llistat = 1
+
+subgrup_velocitats = c()  
+contador_subgrup = 1
+
+periode_deadline = 358.2 # Periode de deadline
+mostres_minim = 3
+
+
+for (i in 1:(length(individu$idreg)-1)) {
+  
+  
+  #Obtenir la velocitat en Km/h
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  temps = (individu$seentime[i+1] - individu$seentime[i])
+  Kh = espai*3600/(1000 * temps)
+  if(temps <= periode_deadline){
+    
+    subgrup_velocitats[contador_subgrup] = Kh
+    contador_subgrup =  contador_subgrup + 1
+  
+  }else if(!is.null(subgrup_velocitats)){
+    
+    if(length(subgrup_velocitats) > mostres_minim){
+       llistat_velocitats[[contador_llistat]] = subgrup_velocitats
+       contador_llistat = contador_llistat + 1
+    }
+    subgrup_velocitats = c()
+    contador_subgrup = 1
+  }
+  
+  
+  
+
+}
+head(llistat_velocitats)
+```
+#Conclusió
+En tenir més mostres es pot classificar de millor manera al subgrup de velocitats.
+Indicar que els subgrups es classificaran de manera independent.
+
+Trobam que les franges
+
+## Segona aproximació
+
+Ara per ara solament hi ha una variable que indica el mode de desplaçament que és la velocitat. Però hi ha altres factors que ens poden indicar el seu mode de transport que són:
+-El nombre diferent d'AP que és connecten
+-Les zones per allà on es mou l'usuari.
+
+El primer pas serà classificar els diferents APs que està connectat un usuari en subgrup.
+
+
+```{r}
+llistat_subgrups = list() #Subgrup de velocitats
+contador_llistat = 1
+
+subgrup_velocitats = c()  
+contador_subgrup = 1
+k=3 #Filtre
+
+
+
+periode_deadline = 358.2 # Periode de deadline
+mostres_minim = 5
+
+diferents_ap = NULL
+
+
+for (i in 1:(length(individu$idreg)-1)) {
+  
+  
+  #Obtenir la velocitat en Km/h
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  temps = (individu$seentime[i+1] - individu$seentime[i])
+  Kh = espai*3600/(1000 * temps)
+  if(temps <= periode_deadline){
+    
+    subgrup_velocitats[contador_subgrup] = Kh
+    contador_subgrup =  contador_subgrup + 1
+  
+  }else if(!is.null(subgrup_velocitats)){
+    
+    if(length(subgrup_velocitats) > mostres_minim){
+       
+      #Suavització del subgrup de velocitats
+      Yt.kMA3 = stats::filter(subgrup_velocitats, filter=rep(1/k,k))
+      Yt.kMA3 <- Yt.kMA3[!is.na(Yt.kMA3)]
+      #subgrup_velocitats <- stats::filter(subgrup_velocitats,filter=c(1/8,1/4,1/4,1/4,1/8),sides=2)
+      
+      #Contador dels diferents Aps conectats
+       ap_conectats = individu[(i-contador_subgrup +2):i,]
+       ap_conectats = ap_conectats[!duplicated(ap_conectats$apmac),]
+       diferents_ap =   length(ap_conectats$apmac)/(contador_subgrup-1)
+      
+       #subgrup_velocitats[contador_subgrup] = diferents_ap
+       vector_entrades =c(Yt.kMA3, diferents_ap)
+       
+       llistat_subgrups[[contador_llistat]] = vector_entrades
+       contador_llistat = contador_llistat + 1 
+    }
+    subgrup_velocitats = c()
+    contador_subgrup = 1
+  }
+  
+  
+  
+
+}
+head(llistat_subgrups)
+```
+
+#Conclusió
+
+Ara hi ha 2 factors que ens permeten conèixer quin tipus de transport ens permet millorar l'algoritme.
+Finalment quedaria posar un tercer factor sobre les zones que visita l'usuari. Aquest es dona, ja que hi ha zones on és més quotidià l'ús del cotxe o anar caminant.
+A través d'un dataset que ens indica la informació dels AP, apareixen 7 zones diferents on estan dividint els APs
+
+#Creació de límits per l'elecció dels límits dels diferents APs
+
+```{r}
+length(llistat_subgrups)
+vector_velocitat = c()
+vector_daps = c()
+contador_daps = 1
+
+contador_quiet = 0
+contador_caminar = 0
+#contador_bicicleta = 0
+contador_altres = 0
+
+
+
+for( i in 1:length(llistat_subgrups)){
+  
+  for(l in 1:(length(llistat_subgrups[[i]])-1)){
+    if(llistat_subgrups[[i]][l] < 2){contador_quiet = contador_quiet + 1} 
+    if(llistat_subgrups[[i]][l] > 3 && llistat_subgrups[[i]][l] < 7){contador_caminar = contador_caminar + 1 }
+    #if(llistat_subgrups[[i]][l] > 12 && llistat_subgrups[[i]][l] < 16){contador_bicicleta = contador_bicicleta + 1}
+    if(llistat_subgrups[[i]][l] > 30 && llistat_subgrups[[i]][l] < 50){contador_altres = contador_altres + 1}
+    
+  }
+  Probabilitat_quiet = contador_quiet/(length(llistat_subgrups[[i]])-1)
+  Probabilitat_caminar = contador_caminar/(length(llistat_subgrups[[i]])-1)
+  #Probabilitat_bicicleta = contador_bicicleta/(length(llistat_subgrups[[i]])-1)
+  Probabilitat_altres = contador_altres/(length(llistat_subgrups[[i]])-1)
+  
+  if(Probabilitat_quiet > 0.5){
+    vector_velocitat[i] = 0
+  }else if(Probabilitat_caminar > 0.5){
+    vector_velocitat[i] = 1
+  #}else if(Probabilitat_bicicleta > 0.5){
+   # vector_velocitat[i] = 2
+  }else if(Probabilitat_altres > 0.5){
+    vector_velocitat[i] = 2
+  }else{
+    vector_velocitat[i] = NA
+  }
+  
+  #Una proba per veure si funciona
+   vector_daps[contador_daps] = llistat_subgrups[[i]][length(llistat_subgrups[[i]])]
+     contador_daps = contador_daps +1
+  
+ # if(!is.na(vector_velocitat[i])){
+     #vector_daps[contador_daps] = llistat_subgrups[[i]][length(llistat_subgrups[[i]])]
+     #contador_daps = contador_daps +1
+  #}
+  
+  
+  contador_quiet = 0
+  contador_caminar = 0
+  #contador_bicicleta = 0
+  contador_altres = 0
+}
+```
+
+
+```{r}
+vector_velocitat
+```
+Com es pot veure hi ha uns valors que directament són NA. Això és a causa que no superen el mínim.
+Però amb els valors obtinguts.
+Per aquesta necessitat requereix de la utilització dels diferents APs connectats en el subgrup.
+
+Per aquesta raó s'utilitzarà una multinomial-logistic-regression
+
+## Multinomial logistic regression
+
+En aquesta secció es realitzarà una cerca d'una multinomial logistic regression, ja que a partir d'un valor que és la de diferents APs connectats en un subgrup.
+
+Per realitzar una petita prova es recollirà els subgrups de l'individu dit.
+On a partir d'una variable (les velocitats) coneixerem.
+
+
+```{r}
+#vector_velocitat = vector_velocitat[!is.na(vector_velocitat)]
+vector_daps
+vector_velocitat
+```
+
+
+
+
+```{r}
+proba = data.frame(vector_velocitat, vector_daps)
+head(proba)
+summary(proba)
+```
+
+
+```{r}
+#library(corrplot)
+correlations <- cor(proba)
+corrplot(correlations, method="circle")  
+```
+
+```{r}
+# Logistics Regression
+glm.fit <- glm(vector_velocitat ~ vector_daps, data = proba, family = binomial)
+```
+
+```{r}
+glm.probs <- predict(glm.fit,type = "response")
+glm.probs[1:5]
+```
+
+```{r}
+glm.pred <- ifelse(glm.probs > 0.5, "caminar", "quiet")
+glm.pred
+```
+https://stats.idre.ucla.edu/r/dae/multinomial-logistic-regression/
+Al reailitzar una proba amb una binimial, s'utilitzarà una multinomial.
+
+
+
+```{r}
+modelo = lm(vector_velocitat~ vector_daps, data = proba)
+modelo
+
+#otros = c(0.3 , 0.5, 0.6, 0.8, 0.9)
+daps = data.frame(vector_daps)
+vector_daps
+
+aaaa = predict(modelo, newdata = daps, interval = "prediction")
+aaaa
+```
+```{r}
+glm.pred <- ifelse(aaaa[,1] > 0.5, "caminar", "quiet")
+glm.pred
+```
+
+
+# Conclusió
+
+Finalment s'ha fet una binomial.
+
+## Arees per on viatgen els individus
+
+La segona eina és conéixer per quines zones viatgen els individus.
+No és el mateix  viatjar per la plaça d'espanya, que viatjar per el passeig maritim.
+També que el nombre de zones wifi que es visiten.
+Per aquesta raó carga la base de dades dels access points.
+
+```{r}
+aps_informacio = read.csv("~/Escritorio/TFM/distribucioaps.csv", header = TRUE, sep = ',')
+str(aps_informacio)
+head(aps_informacio)
+```
+S'han d'afegir els factors que té l'altre.
+Això no faltaria si la base de dades dels aps estiguessin actualitzades.
+```{r}
+aps_informacio[,2] = factor(aps_informacio[,2], levels = levels(individu$apmac))
+
+```
+
+
+
+Es pot observar que els APs estan dividits en 10 zones diferents.
+
+
+```{r}
+llistat_subgrups = list() #Subgrup de velocitats
+contador_llistat = 1
+
+subgrup_velocitats = c()  
+contador_subgrup = 1
+
+periode_deadline = 358.2 # Periode de deadline
+mostres_minim = 3
+
+diferents_ap = NULL
+
+temps_Inicial= c()
+
+
+for (i in 1:(length(individu$idreg)-1)) {
+  
+  
+  #Obtenir la velocitat en Km/h
+  espai = Haversine(individu$lat[i],  individu$lng[i], individu$lat[i+1], individu$lng[i+1])
+  temps = (individu$seentime[i+1] - individu$seentime[i])
+  Kh = espai*3600/(1000 * temps)
+  if(temps <= periode_deadline){
+    
+    subgrup_velocitats[contador_subgrup] = Kh
+    contador_subgrup =  contador_subgrup + 1
+  
+  }else if(!is.null(subgrup_velocitats)){
+    
+    if(length(subgrup_velocitats) > mostres_minim){
+       
+       
+       ap_conectats = individu[(i-contador_subgrup +2):i,]
+       ap_conectats = ap_conectats[!duplicated(ap_conectats$apmac),]
+       
+       #Suavització del subgrup de velocitats
+       
+        #Suavització del subgrup de velocitats per solament k=3
+        #k=3
+        #Yt.kMA3 = stats::filter(subgrup_velocitats, filter=rep(1/k,k))
+        #Yt.kMA3 <- Yt.kMA3[!is.na(Yt.kMA3)]
+       
+       n=round(length(subgrup_velocitats)*0.2)
+       k=2*n+1      #Ha de ser impar
+       Yt.kMA = stats::filter(subgrup_velocitats, filter=rep(1/k,k))
+       Yt.kMA <- Yt.kMA[!is.na(Yt.kMA)]
+       
+       
+       #Per tenir els mateixos nivels de factors
+       ap_conectats$apmac = factor(ap_conectats$apmac, levels = levels(aps_informacio$mac))
+       
+     
+
+       
+       
+       subgrup_velocitats_ts =  ts(subgrup_velocitats)
+       
+       smb = HoltWinters(subgrup_velocitats_ts, beta = FALSE, gamma = FALSE)
+       
+       smb = data.frame(as.matrix(smb$fitted))
+       smb = smb$level
+       
+       
+       
+       
+       
+      #subgrup_velocitats <- stats::filter(subgrup_velocitats,filter=c(1/8,1/4,1/4,1/4,1/8),sides=2)
+       
+       
+       #Arees diferents que han visitat els dispositius
+       zones_diferents = aps_informacio[aps_informacio$mac == ap_conectats$apmac ,]
+       zones_diferents= zones_diferents[!duplicated(zones_diferents$zona),]
+       
+       zones_diferents = zones_diferents[!is.na(zones_diferents$zona)]
+       
+       zones_visitades = length(zones_diferents$zona)
+       
+       # Com a mínim tendria que sortir una zona que han visitat, com que falten dades, es deixarà amb 1
+       if(zones_visitades == 0){zones_visitades = 1}
+       
+       
+       
+       temps_Inicial[contador_llistat] = individu$seentime[(i-contador_subgrup +2)]
+       
+       diferents_ap =   length(ap_conectats$apmac)/(contador_subgrup-1)
+      
+       #subgrup_velocitats[contador_subgrup] = diferents_ap
+       
+       #subgrup_velocitats[contador_subgrup + 1] = zones_visitades
+       
+       
+       #vector_entrades =c(Yt.kMA, diferents_ap, zones_visitades)
+       vector_entrades =c(smb, diferents_ap, zones_visitades)
+      
+       llistat_subgrups[[contador_llistat]] = vector_entrades
+       contador_llistat = contador_llistat + 1 
+    }
+    subgrup_velocitats = c()
+    contador_subgrup = 1
+  }
+  
+  
+  
+
+}
+head(llistat_subgrups)
+```
+
+
+
+```{r}
+length(llistat_subgrups)
+vector_velocitat = c()
+vector_daps = c()
+vector_zones = c()
+contador_daps = 1
+
+contador_quiet = 0
+contador_caminar = 0
+#contador_bicicleta = 0
+contador_altres = 0
+
+Probabilitat_quiet = c()
+Probabilitat_caminar = c()
+#Probabilitat_bicicleta = c()
+Probabilitat_altres = c()
+
+
+for( i in 1:length(llistat_subgrups)){
+  
+    for(l in 1:(length(llistat_subgrups[[i]])-2)){
+    if(llistat_subgrups[[i]][l] < 2){contador_quiet = contador_quiet + 1} 
+    if(llistat_subgrups[[i]][l] > 3 && llistat_subgrups[[i]][l] < 8){contador_caminar = contador_caminar + 1 }
+    #if(llistat_subgrups[[i]][l] > 12 && llistat_subgrups[[i]][l] < 16){contador_bicicleta = contador_bicicleta + 1}
+    if(llistat_subgrups[[i]][l] > 12 && llistat_subgrups[[i]][l] < 60){contador_altres = contador_altres + 1}
+    
+  }
+  Probabilitat_quiet[i] = contador_quiet/(length(llistat_subgrups[[i]])-2)
+  Probabilitat_caminar[i] = contador_caminar/(length(llistat_subgrups[[i]])-2)
+  #Probabilitat_bicicleta[i] = contador_bicicleta/(length(llistat_subgrups[[i]])-2)
+  Probabilitat_altres[i] = contador_altres/(length(llistat_subgrups[[i]])-2)
+  
+  if(Probabilitat_quiet[i] > 0.5){
+    vector_velocitat[i] = 0
+  }else if(Probabilitat_caminar[i] > 0.5){
+    vector_velocitat[i] = 1
+  #}else if(Probabilitat_bicicleta[i] > 0.5){
+  #  vector_velocitat[i] = 2
+  }else if(Probabilitat_altres[i] > 0.5){
+    vector_velocitat[i] = 2
+  } else{
+    vector_velocitat[i] = NA
+  }
+  
+  #Una proba per veure si funciona
+   vector_daps[contador_daps] = llistat_subgrups[[i]][length(llistat_subgrups[[i]])-1]
+   
+   
+   vector_zones[contador_daps] = llistat_subgrups[[i]][length(llistat_subgrups[[i]])]
+     contador_daps = contador_daps +1
+     
+     
+  
+ # if(!is.na(vector_velocitat[i])){
+     #vector_daps[contador_daps] = llistat_subgrups[[i]][length(llistat_subgrups[[i]])]
+     #contador_daps = contador_daps +1
+  #}
+  
+  
+  contador_quiet = 0
+  contador_caminar = 0
+  contador_bicicleta = 0
+  contador_altres = 0
+}
+#length(vector_velocitat)
+
+```
+
+## Multinomial logistic regression versió 2
+
+A diferencia de la versió 1 tenim un altre variable que ens permetrá diferenciar més bé les velocitats.
+
+També s'afegiran variables de les probabilitats d'estar quiet, caminant i altres.
+
+```{r}
+proba = data.frame(vector_velocitat, vector_daps, vector_zones,Probabilitat_quiet, Probabilitat_caminar, Probabilitat_altres )
+head(proba)
+summary(proba)
+
+length(llistat_subgrups)
+```
+
+
+```{r}
+library(corrplot)
+correlations <- cor(proba)
+corrplot(correlations, method="circle")  
+```
+
+```{r}
+# Logistics Regression
+#glm.fit <- lm(vector_velocitat ~ vector_daps + vector_zones, data = proba)
+#vector_velocitat[3] = 2
+vector_velocitat
+modelo2 <- lm(vector_velocitat ~ vector_daps + vector_zones + Probabilitat_quiet + Probabilitat_caminar + Probabilitat_altres, data = proba)
+```
+
+```{r}
+predicio = data.frame(vector_daps,vector_zones,Probabilitat_quiet, Probabilitat_caminar, Probabilitat_altres )
+
+
+prediccion = predict(modelo2, newdata = predicio, interval = "prediction")
+
+```
+
+```{r}
+#glm.pred <- ifelse(aaaa[,1] > 0.5, "caminar", "quiet")
+prediction = c()
+for (i in 1:length(prediccion[,1])) {
+  if(prediccion[i,1] < 0.5 ){prediction[i] = 0}
+  if(prediccion[i,1] > 0.5 && prediccion[i,1] < 1.5){prediction[i] =1}
+  if(prediccion[i,1] > 1.5){prediction[i] = 2}
+}
+length(prediction)
+length(temps_Inicial)
+
+temps_UTC = anytime(temps_Inicial)
+temps_UTC
+```
+
+```{r}
+lim_quiet = rep(0, times = length(prediction))
+lim_caminar = rep(1, times = length(prediction))
+lim_altres = rep(2, times = length(prediction))
+plot(y=prediction, x=temps_UTC, type = "l", main= "Classificació d'un usuari en un dia")
+lines(lim_quiet, lty=2, col="red")
+lines(lim_caminar, lty=2, col="blue")
+lines(lim_altres, lty=2, col="green")
+legend("topleft", legend=c("Classificat en altres = 2","Classificat en Caminar = 1", "Classificat en quiet = 0"), col=c("green","blue","red"), lty=2, cex=0.8)
+
+
+```
+#Conclusió algoritme
+
+Es pot observar en el resultat l'evolució dels temps segons l'usuari. On sol estar en moviment la gran majoria del temps, en aquesta gràfica no consta la finalització dels subgrups. Però s'observa que un usuari no sempre utilitza el mateix tipus de transport.
+Pel tema si aquest fet correspon a la realitat, és difícil conèixer quina accuracy té l'algoritme, pot estar el cas que tengui una millor aproximació un altre algoritme o un altre tipus de suavització.
+
