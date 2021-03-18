@@ -164,7 +164,7 @@ class Classificacio_mobilitat(object):
                 #Obtenir els diferents APs
                 aps = entrades_dispositiu.loc[(indice_fila+1-contador_subgrup) :indice_fila]
                 aps = aps.drop_duplicates(subset=['apmac'])
-                diferents_aps = len(aps)/len(entrades_dispositiu)
+                diferents_aps = len(aps)/len(self.aps_informacio)
 
                 #Diferents zones que han visitat els ususaris
 
@@ -172,7 +172,7 @@ class Classificacio_mobilitat(object):
                 if len(arees) > 1:
                     arees = arees.drop_duplicates(subset=['zona'])
                     nombre_arees = len(arees)
-                else:
+                else: #Casos per quan els aps no esteien classificats en zones
                     nombre_arees = 1
 
                 #Obtenir hora inici i final del subgrup per comprendre quin temps tarda
