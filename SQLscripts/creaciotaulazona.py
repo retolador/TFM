@@ -3,11 +3,11 @@ from psycopg2 import Error
 
 
 try:
-    connection = psycopg2.connect(user = "postgres",
-                                  password = "pass@#29",
-                                  host = "127.0.0.1",
-                                  port = "5432",
-                                  database = "postgres_db")
+    connection = psycopg2.connect(user = "",
+                                  password = "",
+                                  host = "",
+                                  port = "",
+                                  database = "")
 
     cursor = connection.cursor()
 
